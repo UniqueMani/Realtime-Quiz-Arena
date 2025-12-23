@@ -8,7 +8,7 @@ A demo "real-time quiz arena" full-stack project:
 Prereqs: Docker + Docker Compose
 
 ```bash
-cd realtime-quiz-arena-demo
+cd realtime-quiz-arena
 docker compose up -d --build
 ```
 
