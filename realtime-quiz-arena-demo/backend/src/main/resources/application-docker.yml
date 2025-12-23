@@ -1,0 +1,19 @@
+spring:
+  datasource:
+    url: jdbc:postgresql://db:5432/quiz
+    username: quiz
+    password: quiz
+    driver-class-name: org.postgresql.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+
+  rabbitmq:
+    host: rabbitmq
+    port: 5672
+    username: guest
+    password: guest

@@ -1,0 +1,12 @@
+# Node
+frontend/node_modules
+frontend/dist
+
+# Java
+backend/target
+backend/.idea
+backend/.classpath
+backend/.project
+
+# OS
+.DS_Store
