@@ -1,4 +1,4 @@
-# Realtime Quiz Arena (Demo)
+# Realtime Quiz Arena 
 A demo "real-time quiz arena" full-stack project:
 - Frontend: Vue 3 (Vite)
 - Backend: Spring Boot 3 (REST + WebSocket/STOMP + OpenAPI)
