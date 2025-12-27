@@ -45,3 +45,10 @@ export async function startRoom(code: string, hostToken: string): Promise<Questi
     )
     return res.data
 }
+
+export async function getCurrentQuestion(code: string): Promise<QuestionPush | null> {
+    const res = await api.get(`/rooms/${code}/current`, { validateStatus: () => true })
+    if (res.status === 204) return null
+    if (res.status >= 200 && res.status < 300) return res.data
+    throw new Error(`Failed to get current question: ${res.status}`)
+}

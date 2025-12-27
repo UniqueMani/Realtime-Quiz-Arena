@@ -4,7 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { Client } from '@stomp/stompjs'
 import { useSessionStore } from '../stores/session'
 import { connectStomp } from '../lib/ws'
-import type { LeaderboardEntry, LeaderboardPush, QuestionPush } from '../lib/api'
+import { getCurrentQuestion, type LeaderboardEntry, type LeaderboardPush, type QuestionPush } from '../lib/api'
 
 const route = useRoute()
 const router = useRouter()
@@ -22,14 +22,18 @@ const leaderboard = ref<LeaderboardEntry[]>([])
 
 let client: Client | null = null
 
-// Demo：固定题（后端也支持 questionId = -1 且正确答案 Mars）
-const question = ref<QuestionPush>({
-  questionId: -1,
-  stem: 'Demo question: Which planet is known as the Red Planet?',
-  options: ['Earth', 'Mars', 'Jupiter', 'Venus'],
-  openedAtEpochMs: 0,
-  closedAtEpochMs: 0,
-})
+// Question is pushed from the server when host starts the game.
+const question = ref<QuestionPush | null>(null)
+
+const started = computed(() => !!question.value)
+
+function applyQuestion(q: QuestionPush) {
+  question.value = q
+  // reset UI
+  selected.value = ''
+  submitted.value = false
+  err.value = ''
+}
 
 function parseLeaderboard(payload: any) {
   if (Array.isArray(payload)) return { entries: payload, serverTimeEpochMs: Date.now() }
@@ -53,6 +57,11 @@ function submit() {
     return
   }
 
+  if (!question.value) {
+    err.value = '主持人还没开始游戏哦～请稍等！'
+    return
+  }
+
   client.publish({
     destination: `/app/room/${code.value}/answer`,
     body: JSON.stringify({
@@ -69,7 +78,21 @@ function submit() {
 onMounted(() => {
   if (!code.value || !playerId.value) router.push('/')
 
+  // If the game was already started, fetch current question once (for refresh / late join)
+  getCurrentQuestion(code.value)
+    .then((q) => {
+      if (q) applyQuestion(q)
+    })
+    .catch(() => {})
+
   client = connectStomp((c) => {
+    c.subscribe(`/topic/room/${code.value}/question`, (msg) => {
+      try {
+        const q = JSON.parse(msg.body) as QuestionPush
+        applyQuestion(q)
+      } catch {}
+    })
+
     c.subscribe(`/topic/room/${code.value}/leaderboard`, (msg) => {
       try {
         const data = parseLeaderboard(JSON.parse(msg.body))
@@ -106,30 +129,38 @@ onBeforeUnmount(() => {
           </div>
 
           <div class="mt-6 rounded-3xl bg-white/70 border border-slate-100 p-5">
-            <div class="text-lg font-extrabold text-slate-800"> {{ question.stem }}</div>
-            <p class="mt-2 text-sm text-slate-600">
-              选一个答案提交后，主持人页面的排行榜会实时变化～
-            </p>
-
-            <div class="mt-5 grid gap-3 sm:grid-cols-2">
-              <button
-                  v-for="opt in question.options"
-                  :key="opt"
-                  @click="pick(opt)"
-                  class="group rounded-3xl border px-4 py-4 text-left shadow-sm transition active:scale-[0.99]"
-                  :class="selected === opt
-                  ? 'border-pink-300 bg-pink-50'
-                  : 'border-slate-200 bg-white/70 hover:bg-slate-50'"
-              >
-                <div class="flex items-center justify-between">
-                  <div class="font-semibold text-slate-800">{{ opt }}</div>
-                  <span class="text-xl" v-if="selected === opt">✅</span>
-                  <span class="text-xl opacity-40 group-hover:opacity-80" v-else></span>
-                </div>
-              </button>
+            <div v-if="!started" class="py-12 text-center">
+              <div class="text-4xl">⏳</div>
+              <div class="mt-3 text-lg font-extrabold text-slate-800">等待主持人开始...</div>
+              <div class="mt-2 text-sm text-slate-600">主持人点击【开始游戏】后，这里会自动弹出同一题目。</div>
             </div>
 
-            <div class="mt-5 flex flex-wrap gap-3">
+            <template v-else>
+              <div class="text-lg font-extrabold text-slate-800"> {{ question!.stem }}</div>
+              <p class="mt-2 text-sm text-slate-600">
+                选一个答案提交后，主持人页面的排行榜会实时变化～
+              </p>
+
+              <div class="mt-5 grid gap-3 sm:grid-cols-2">
+                <button
+                    v-for="opt in question!.options"
+                    :key="opt"
+                    @click="pick(opt)"
+                    class="group rounded-3xl border px-4 py-4 text-left shadow-sm transition active:scale-[0.99]"
+                    :class="selected === opt
+                    ? 'border-pink-300 bg-pink-50'
+                    : 'border-slate-200 bg-white/70 hover:bg-slate-50'"
+                >
+                  <div class="flex items-center justify-between">
+                    <div class="font-semibold text-slate-800">{{ opt }}</div>
+                    <span class="text-xl" v-if="selected === opt">✅</span>
+                    <span class="text-xl opacity-40 group-hover:opacity-80" v-else></span>
+                  </div>
+                </button>
+              </div>
+            </template>
+
+            <div v-if="started" class="mt-5 flex flex-wrap gap-3">
               <button
                   @click="submit"
                   class="rounded-2xl bg-gradient-to-r from-sky-500 to-indigo-500 px-5 py-3 font-semibold text-white shadow hover:opacity-95"

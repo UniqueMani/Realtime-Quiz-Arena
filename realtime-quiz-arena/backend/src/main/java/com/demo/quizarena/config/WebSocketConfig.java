@@ -19,7 +19,8 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
 
     @Override
     public void registerStompEndpoints(StompEndpointRegistry registry) {
-        // SockJS endpoint
-        registry.addEndpoint("/ws").setAllowedOriginPatterns("*").withSockJS();
+        // Plain WebSocket endpoint (works with STOMP client brokerURL ws://host/ws)
+        // If you later need SockJS fallback, add another endpoint like "/ws-sockjs" with .withSockJS().
+        registry.addEndpoint("/ws").setAllowedOriginPatterns("*");
     }
 }

@@ -37,6 +37,8 @@ public class RoomService {
 
         // current question window
         public Question currentQuestion;
+        // last question payload we pushed to clients (so late joiners can fetch via REST)
+        public QuestionPush currentQuestionPush;
         public long openedAtMs;
         public long closedAtMs;
 
@@ -87,20 +89,38 @@ public class RoomService {
         Question q = questionRepository.findAll().stream().findFirst().orElse(null);
         if (q == null) {
             // no questions in DB; we'll open a synthetic question.
-            return openSyntheticQuestion(room);
+            QuestionPush push = openSyntheticQuestion(room);
+            room.currentQuestionPush = push;
+            return push;
         } else {
             room.currentQuestion = q;
             room.openedAtMs = System.currentTimeMillis();
             room.closedAtMs = room.openedAtMs + (q.getTimeLimitSec() * 1000L);
-            return toQuestionPush(q, room.openedAtMs, room.closedAtMs);
+            QuestionPush push = toQuestionPush(q, room.openedAtMs, room.closedAtMs);
+            room.currentQuestionPush = push;
+            return push;
         }
     }
 
     public boolean canAcceptAnswer(Room room, long nowMs, Long questionId) {
         if (room.status != RoomStatus.IN_GAME) return false;
-        if (room.currentQuestion == null) return false;
+        // Synthetic question (DB empty)
+        if (room.currentQuestion == null) {
+            if (!Objects.equals(questionId, -1L)) return false;
+            return nowMs >= room.openedAtMs && nowMs <= room.closedAtMs;
+        }
+
         if (!Objects.equals(room.currentQuestion.getId(), questionId)) return false;
         return nowMs >= room.openedAtMs && nowMs <= room.closedAtMs;
+    }
+
+    /**
+     * Current question payload for REST polling / late joiners.
+     * Returns null if the game hasn't started yet.
+     */
+    public QuestionPush getCurrentQuestionPush(String code) {
+        Room room = getRoomOrThrow(code);
+        return room.currentQuestionPush;
     }
 
     public LeaderboardPush leaderboard(Room room) {
