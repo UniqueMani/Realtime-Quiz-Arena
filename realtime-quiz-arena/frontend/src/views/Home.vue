@@ -19,22 +19,33 @@ function normCode(v: string) {
 }
 
 async function onCreateRoom() {
+  console.log('[Home.onCreateRoom] 开始创建房间', { nickname: nickname.value })
   err.value = ''
   const nick = nickname.value.trim()
   if (!nick) {
+    console.warn('[Home.onCreateRoom] 昵称为空')
     err.value = '先取一个独一无二的昵称吧～ '
     return
   }
 
   creating.value = true
   try {
+    console.log('[Home.onCreateRoom] 调用createRoom API')
     const { roomCode, hostToken } = await createRoom()
+    console.log('[Home.onCreateRoom] 房间创建成功', { roomCode, hasHostToken: !!hostToken })
     s.roomCode = roomCode
     s.hostToken = hostToken
     s.nickname = nick
     s.playerId = ''
+    console.log('[Home.onCreateRoom] 跳转到主持人页面', { path: `/host/${roomCode}` })
     router.push(`/host/${roomCode}`)
   } catch (e: any) {
+    console.error('[Home.onCreateRoom] 创建房间失败', {
+      error: e,
+      response: e?.response,
+      status: e?.response?.status,
+      data: e?.response?.data,
+    })
     err.value = e?.response?.data?.message ?? '创建房间失败了，稍后再试试～'
   } finally {
     creating.value = false

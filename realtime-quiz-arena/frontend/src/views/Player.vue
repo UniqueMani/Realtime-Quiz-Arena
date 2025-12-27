@@ -19,6 +19,8 @@ const submitted = ref(false)
 const selected = ref<string>('')
 
 const leaderboard = ref<LeaderboardEntry[]>([])
+// 存储用户的所有答案
+const userAnswers = ref<Map<number, string>>(new Map())
 
 let client: Client | null = null
 
@@ -26,6 +28,11 @@ let client: Client | null = null
 const question = ref<QuestionPush | null>(null)
 
 const started = computed(() => !!question.value)
+const isLastQuestion = computed(() => {
+  if (!question.value) return false
+  return question.value.currentIndex && question.value.totalCount && 
+         question.value.currentIndex >= question.value.totalCount
+})
 
 function applyQuestion(q: QuestionPush) {
   question.value = q
@@ -62,6 +69,11 @@ function submit() {
     return
   }
 
+  // 存储用户答案
+  if (question.value.questionId) {
+    userAnswers.value.set(question.value.questionId, selected.value)
+  }
+
   client.publish({
     destination: `/app/room/${code.value}/answer`,
     body: JSON.stringify({
@@ -73,6 +85,16 @@ function submit() {
   })
 
   submitted.value = true
+}
+
+function goToResult() {
+  // 将答案存储到 session store（转换为普通对象）
+  const answersObj: Record<number, string> = {}
+  userAnswers.value.forEach((value, key) => {
+    answersObj[key] = value
+  })
+  s.userAnswers = answersObj
+  router.push(`/room/${code.value}/result`)
 }
 
 onMounted(() => {
@@ -136,6 +158,10 @@ onBeforeUnmount(() => {
             </div>
 
             <template v-else>
+              <div v-if="question.currentIndex && question.totalCount" class="mb-3 text-sm text-slate-600">
+                第 <span class="font-bold text-slate-800">{{ question.currentIndex }}</span> / 
+                <span class="font-bold text-slate-800">{{ question.totalCount }}</span> 题
+              </div>
               <div class="text-lg font-extrabold text-slate-800"> {{ question!.stem }}</div>
               <p class="mt-2 text-sm text-slate-600">
                 选一个答案提交后，主持人页面的排行榜会实时变化～
@@ -163,9 +189,18 @@ onBeforeUnmount(() => {
             <div v-if="started" class="mt-5 flex flex-wrap gap-3">
               <button
                   @click="submit"
-                  class="rounded-2xl bg-gradient-to-r from-sky-500 to-indigo-500 px-5 py-3 font-semibold text-white shadow hover:opacity-95"
+                  :disabled="submitted"
+                  class="rounded-2xl bg-gradient-to-r from-sky-500 to-indigo-500 px-5 py-3 font-semibold text-white shadow hover:opacity-95 disabled:opacity-60"
               >
                 提交答案
+              </button>
+
+              <button
+                  v-if="isLastQuestion && submitted"
+                  @click="goToResult"
+                  class="rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-500 px-5 py-3 font-semibold text-white shadow hover:opacity-95"
+              >
+                查看结果
               </button>
 
               <div v-if="submitted" class="rounded-2xl bg-emerald-50 border border-emerald-200 px-4 py-3 text-emerald-700">

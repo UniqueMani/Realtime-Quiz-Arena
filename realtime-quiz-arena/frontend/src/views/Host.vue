@@ -4,7 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { Client } from '@stomp/stompjs'
 import { useSessionStore } from '../stores/session'
 import { connectStomp } from '../lib/ws'
-import { startRoom, type LeaderboardEntry, type LeaderboardPush, type QuestionPush } from '../lib/api'
+import { startRoom, nextQuestion, type LeaderboardEntry, type LeaderboardPush, type QuestionPush } from '../lib/api'
 
 const route = useRoute()
 const router = useRouter()
@@ -14,6 +14,7 @@ const code = computed(() => String(route.params.code || s.roomCode || '').toUppe
 const hostToken = computed(() => s.hostToken)
 
 const starting = ref(false)
+const nexting = ref(false)
 const err = ref('')
 
 const question = ref<QuestionPush | null>(null)
@@ -31,21 +32,54 @@ function parseLeaderboard(payload: any) {
 }
 
 async function onStart() {
+  console.log('[Host.onStart] 开始游戏', { code: code.value, hasHostToken: !!hostToken.value })
   err.value = ''
   if (!hostToken.value) {
-    err.value = '缺少 hostToken：请从首页“创建房间”进入主持人页～'
+    console.warn('[Host.onStart] hostToken缺失')
+    err.value = '缺少 hostToken：请从首页"创建房间"进入主持人页～'
     return
   }
 
   starting.value = true
   try {
+    console.log('[Host.onStart] 调用startRoom API', { code: code.value })
     const q = await startRoom(code.value, hostToken.value)
+    console.log('[Host.onStart] 成功获取题目', { question: q })
     question.value = q
   } catch (e: any) {
+    console.error('[Host.onStart] 启动失败', {
+      code: code.value,
+      error: e,
+      response: e?.response,
+      status: e?.response?.status,
+      data: e?.response?.data,
+    })
     err.value = e?.response?.data?.message ?? '开始失败：请检查后端是否正常运行'
   } finally {
     starting.value = false
   }
+}
+
+async function onNext() {
+  err.value = ''
+  if (!hostToken.value) {
+    err.value = '缺少 hostToken'
+    return
+  }
+
+  nexting.value = true
+  try {
+    const q = await nextQuestion(code.value, hostToken.value)
+    question.value = q
+  } catch (e: any) {
+    err.value = e?.response?.data?.message ?? '下一题失败'
+  } finally {
+    nexting.value = false
+  }
+}
+
+function goToResult() {
+  router.push(`/room/${code.value}/result`)
 }
 
 async function copyRoomCode() {
@@ -82,6 +116,13 @@ onMounted(() => {
   if (!code.value) router.push('/')
 
   client = connectStomp((c) => {
+    c.subscribe(`/topic/room/${code.value}/question`, (msg) => {
+      try {
+        const q = JSON.parse(msg.body) as QuestionPush
+        question.value = q
+      } catch {}
+    })
+
     c.subscribe(`/topic/room/${code.value}/leaderboard`, (msg) => {
       try {
         const data = parseLeaderboard(JSON.parse(msg.body))
@@ -168,8 +209,14 @@ onBeforeUnmount(() => {
       <div class="mt-6 rounded-3xl bg-white/70 backdrop-blur shadow-xl border border-white/60 p-6">
         <div class="flex items-center justify-between">
           <h2 class="text-lg font-extrabold text-slate-800">当前题目</h2>
-          <div v-if="question" class="text-sm text-slate-600">
-            ⏳ 剩余：<span class="font-bold text-slate-800">{{ timeLeft }}</span>
+          <div v-if="question" class="flex items-center gap-4">
+            <div v-if="question.currentIndex && question.totalCount" class="text-sm text-slate-600">
+              第 <span class="font-bold text-slate-800">{{ question.currentIndex }}</span> / 
+              <span class="font-bold text-slate-800">{{ question.totalCount }}</span> 题
+            </div>
+            <div class="text-sm text-slate-600">
+              ⏳ 剩余：<span class="font-bold text-slate-800">{{ timeLeft }}</span>
+            </div>
           </div>
         </div>
 
@@ -198,6 +245,24 @@ onBeforeUnmount(() => {
             <p class="mt-3 text-xs text-slate-500">
               （题目由后端 /rooms/{code}/start 返回；选手页面默认展示同题即可提交答案。）
             </p>
+          </div>
+
+          <div v-if="question" class="mt-4 flex flex-wrap gap-3">
+            <button
+                v-if="question.currentIndex && question.totalCount && question.currentIndex < question.totalCount"
+                @click="onNext"
+                :disabled="nexting"
+                class="rounded-2xl bg-gradient-to-r from-indigo-500 to-purple-500 px-5 py-2 text-sm font-semibold text-white shadow hover:opacity-95 disabled:opacity-60"
+            >
+              {{ nexting ? '加载中…' : '下一题' }}
+            </button>
+            <button
+                v-if="question.currentIndex && question.totalCount && question.currentIndex >= question.totalCount"
+                @click="goToResult"
+                class="rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-500 px-5 py-2 text-sm font-semibold text-white shadow hover:opacity-95"
+            >
+              查看结果
+            </button>
           </div>
         </div>
 

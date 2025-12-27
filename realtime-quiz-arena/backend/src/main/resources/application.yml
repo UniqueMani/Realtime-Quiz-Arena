@@ -9,10 +9,13 @@ spring:
     password: ""
   jpa:
     hibernate:
-      ddl-auto: update
+      # 使用 create-drop 确保每次启动都重新创建表结构，解决列名不匹配问题
+      # 对于内存数据库，这是安全的，因为数据在应用关闭时会丢失
+      ddl-auto: create-drop
     properties:
       hibernate:
         format_sql: true
+        # 使用默认命名策略，自动将驼峰命名转换为下划线命名
   h2:
     console:
       enabled: true

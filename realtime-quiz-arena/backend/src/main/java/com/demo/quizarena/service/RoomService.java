@@ -1,5 +1,6 @@
 package com.demo.quizarena.service;
 
+import com.demo.quizarena.api.dto.QuestionWithAnswerResponse;
 import com.demo.quizarena.domain.Question;
 import com.demo.quizarena.repo.QuestionRepository;
 import com.demo.quizarena.realtime.LeaderboardEntry;
@@ -35,6 +36,11 @@ public class RoomService {
 
         public final Map<String, Player> players = new ConcurrentHashMap<>();
 
+        // 当前房间的题目列表
+        public List<Question> questionList = new ArrayList<>();
+        // 当前题目索引（初始为 -1，表示未开始）
+        public int currentQuestionIndex = -1;
+
         // current question window
         public Question currentQuestion;
         // last question payload we pushed to clients (so late joiners can fetch via REST)
@@ -58,48 +64,103 @@ public class RoomService {
     }
 
     public Room createRoom() {
+        System.out.println("[RoomService.createRoom] 开始创建房间");
         String code = randomCode(6);
         String hostToken = UUID.randomUUID().toString();
         Room room = new Room(code, hostToken);
         rooms.put(code, room);
+        System.out.println("[RoomService.createRoom] 房间创建成功: code=" + code + ", 当前房间数=" + rooms.size());
         return room;
     }
 
     public Room getRoomOrThrow(String code) {
+        System.out.println("[RoomService.getRoomOrThrow] 查找房间: code=" + code + ", 当前房间数=" + rooms.size());
         Room room = rooms.get(code);
-        if (room == null) throw new NoSuchElementException("Room not found: " + code);
+        if (room == null) {
+            System.err.println("[RoomService.getRoomOrThrow] 房间未找到: code=" + code + ", 可用房间: " + rooms.keySet());
+            throw new NoSuchElementException("房间未找到: " + code);
+        }
         return room;
     }
 
     public Player joinRoom(String code, String nickname) {
+        System.out.println("[RoomService.joinRoom] 开始加入房间: code=" + code + ", nickname=" + nickname);
         Room room = getRoomOrThrow(code);
         String playerId = UUID.randomUUID().toString();
         Player p = new Player(playerId, nickname);
         room.players.put(playerId, p);
+        System.out.println("[RoomService.joinRoom] 加入房间成功: playerId=" + playerId + ", 房间当前人数=" + room.players.size());
         return p;
     }
 
     public QuestionPush startGameAndOpenFirstQuestion(String code, String hostToken) {
+        System.out.println("[RoomService.startGameAndOpenFirstQuestion] 开始启动游戏: code=" + code);
         Room room = getRoomOrThrow(code);
+        System.out.println("[RoomService.startGameAndOpenFirstQuestion] 房间找到: code=" + room.code + ", status=" + room.status);
         requireHost(room, hostToken);
+        System.out.println("[RoomService.startGameAndOpenFirstQuestion] 主机令牌验证通过");
 
         room.status = RoomStatus.IN_GAME;
 
-        // Demo: use the first question of the first quiz (or create a built-in default)
-        Question q = questionRepository.findAll().stream().findFirst().orElse(null);
-        if (q == null) {
-            // no questions in DB; we'll open a synthetic question.
-            QuestionPush push = openSyntheticQuestion(room);
-            room.currentQuestionPush = push;
-            return push;
-        } else {
-            room.currentQuestion = q;
-            room.openedAtMs = System.currentTimeMillis();
-            room.closedAtMs = room.openedAtMs + (q.getTimeLimitSec() * 1000L);
-            QuestionPush push = toQuestionPush(q, room.openedAtMs, room.closedAtMs);
-            room.currentQuestionPush = push;
-            return push;
+        // 先检查数据库中的题目总数
+        long totalQuestions = questionRepository.count();
+        System.out.println("[RoomService.startGameAndOpenFirstQuestion] 数据库中总共有 " + totalQuestions + " 道题目");
+        
+        if (totalQuestions == 0) {
+            System.err.println("[RoomService.startGameAndOpenFirstQuestion] 数据库中没有题目！请检查 QuestionDataInitializer 是否正常执行");
+            throw new IllegalStateException("数据库中没有题目，请先初始化题目数据。请重启后端应用以确保数据初始化。");
         }
+        
+        // 调用随机抽题获取20道题目
+        List<Question> questions;
+        try {
+            System.out.println("[RoomService.startGameAndOpenFirstQuestion] 尝试获取20道随机题目");
+            questions = questionRepository.findRandomQuestions(20);
+            System.out.println("[RoomService.startGameAndOpenFirstQuestion] 成功获取 " + questions.size() + " 道题目");
+            // 打印第一道题的信息用于调试
+            if (!questions.isEmpty()) {
+                Question first = questions.get(0);
+                System.out.println("[RoomService.startGameAndOpenFirstQuestion] 第一道题: ID=" + first.getId() + ", stem=" + first.getStem());
+            }
+        } catch (Exception e) {
+            // 如果随机抽题失败，尝试获取所有题目
+            System.err.println("[RoomService.startGameAndOpenFirstQuestion] 随机抽题失败，尝试获取所有题目: " + e.getMessage());
+            e.printStackTrace();
+            questions = questionRepository.findAll();
+            System.out.println("[RoomService.startGameAndOpenFirstQuestion] 获取到 " + questions.size() + " 道题目");
+        }
+        
+        // 确保至少有题目
+        if (questions.isEmpty()) {
+            System.err.println("[RoomService.startGameAndOpenFirstQuestion] 数据库中没有题目！");
+            throw new IllegalStateException("数据库中没有题目，请先初始化题目数据");
+        }
+        
+        // 如果题目数量少于20道，使用所有题目；如果超过20道，随机选择20道
+        if (questions.size() < 20) {
+            System.out.println("[RoomService.startGameAndOpenFirstQuestion] 题目数量(" + questions.size() + ")少于20道，使用所有题目");
+        } else if (questions.size() > 20) {
+            // 如果题目超过20道，随机选择20道
+            java.util.Collections.shuffle(questions);
+            questions = questions.subList(0, 20);
+            System.out.println("[RoomService.startGameAndOpenFirstQuestion] 题目数量超过20道，随机选择20道");
+        } else {
+            System.out.println("[RoomService.startGameAndOpenFirstQuestion] 题目数量正好20道");
+        }
+
+        // 存储题目列表到房间
+        room.questionList = questions;
+        room.currentQuestionIndex = 0;
+        
+        // 获取第一道题目
+        Question q = questions.get(0);
+        room.currentQuestion = q;
+        room.openedAtMs = System.currentTimeMillis();
+        room.closedAtMs = room.openedAtMs + (q.getTimeLimitSec() * 1000L);
+        QuestionPush push = toQuestionPush(q, room.openedAtMs, room.closedAtMs, room);
+        room.currentQuestionPush = push;
+        System.out.println("[RoomService.startGameAndOpenFirstQuestion] 游戏启动成功，第一题ID=" + q.getId());
+        return push;
     }
 
     public boolean canAcceptAnswer(Room room, long nowMs, Long questionId) {
@@ -137,8 +198,44 @@ public class RoomService {
         return p;
     }
 
+    public QuestionPush nextQuestion(String code, String hostToken) {
+        Room room = getRoomOrThrow(code);
+        requireHost(room, hostToken);
+
+        if (room.currentQuestionIndex < 0 || room.questionList.isEmpty()) {
+            throw new IllegalStateException("Game not started yet");
+        }
+
+        if (room.currentQuestionIndex >= room.questionList.size() - 1) {
+            throw new IllegalStateException("No more questions");
+        }
+
+        room.currentQuestionIndex++;
+        Question q = room.questionList.get(room.currentQuestionIndex);
+        room.currentQuestion = q;
+        room.openedAtMs = System.currentTimeMillis();
+        room.closedAtMs = room.openedAtMs + (q.getTimeLimitSec() * 1000L);
+        QuestionPush push = toQuestionPush(q, room.openedAtMs, room.closedAtMs, room);
+        room.currentQuestionPush = push;
+        return push;
+    }
+
+    public List<QuestionWithAnswerResponse> getQuestionsWithAnswers(String code) {
+        Room room = getRoomOrThrow(code);
+        if (room.questionList.isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        return room.questionList.stream()
+                .map(this::toQuestionWithAnswerResponse)
+                .collect(Collectors.toList());
+    }
+
     private void requireHost(Room room, String token) {
-        if (!room.hostToken.equals(token)) throw new SecurityException("Invalid host token");
+        if (token == null || !room.hostToken.equals(token)) {
+            System.err.println("[RoomService.requireHost] 主机令牌验证失败: roomCode=" + room.code);
+            throw new SecurityException("无效的主机令牌");
+        }
     }
 
     private static String randomCode(int len) {
@@ -149,14 +246,30 @@ public class RoomService {
         return sb.toString();
     }
 
-    private QuestionPush toQuestionPush(Question q, long openedAt, long closedAt) {
+    private QuestionPush toQuestionPush(Question q, long openedAt, long closedAt, Room room) {
         QuestionPush push = new QuestionPush();
         push.questionId = q.getId();
         push.stem = q.getStem();
         push.options = parseOptions(q.getOptionsJson());
         push.openedAtEpochMs = openedAt;
         push.closedAtEpochMs = closedAt;
+        push.currentIndex = room.currentQuestionIndex + 1;
+        push.totalCount = room.questionList.size();
         return push;
+    }
+
+    private QuestionWithAnswerResponse toQuestionWithAnswerResponse(Question q) {
+        List<String> options = parseOptions(q.getOptionsJson());
+        return new QuestionWithAnswerResponse(
+                q.getId(),
+                q.getStem(),
+                options,
+                q.getCorrectAnswer(),
+                q.getExplanation(),
+                q.getCategory(),
+                q.getCreatedAt(),
+                q.getUpdatedAt()
+        );
     }
 
     private List<String> parseOptions(String jsonArrayLike) {
@@ -182,6 +295,8 @@ public class RoomService {
         push.options = List.of("Earth", "Mars", "Jupiter", "Venus");
         push.openedAtEpochMs = room.openedAtMs;
         push.closedAtEpochMs = room.closedAtMs;
+        push.currentIndex = 1;
+        push.totalCount = 1;
         return push;
     }
 }
