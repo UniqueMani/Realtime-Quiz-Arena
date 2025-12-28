@@ -25,3 +25,15 @@ springdoc:
     path: /api-docs
   swagger-ui:
     path: /swagger-ui.html
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: "health,info,prometheus,metrics" # 暴露这些接口
+  endpoint:
+    health:
+      show-details: always
+  metrics:
+    tags:
+      application: quiz-backend # 给数据打标签

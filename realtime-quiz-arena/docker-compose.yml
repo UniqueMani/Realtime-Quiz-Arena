@@ -9,6 +9,8 @@ services:
       - "5432:5432"
     volumes:
       - db_data:/var/lib/postgresql/data
+    networks:
+      - quiz-network
 
   rabbitmq:
     image: rabbitmq:3-management
@@ -18,6 +20,8 @@ services:
     environment:
       RABBITMQ_DEFAULT_USER: guest
       RABBITMQ_DEFAULT_PASS: guest
+    networks:
+      - quiz-network
 
   backend:
     build:
@@ -33,6 +37,8 @@ services:
     depends_on:
       - db
       - rabbitmq
+    networks:
+      - quiz-network
 
   frontend:
     build:
@@ -46,6 +52,36 @@ services:
       - "5173:80"
     depends_on:
       - backend
+    networks:
+      - quiz-network
+
+  # 1. Prometheus: 收集数据
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: quiz-prometheus
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml # 挂载配置文件
+    ports:
+      - "9090:9090"
+    networks:
+      - quiz-network
+
+  # 2. Grafana: 展示数据
+  grafana:
+    image: grafana/grafana:latest
+    container_name: quiz-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin # 初始密码
+    depends_on:
+      - prometheus
+    networks:
+      - quiz-network
 
 volumes:
   db_data:
+
+networks:
+  quiz-network:
+    driver: bridge
