@@ -186,7 +186,7 @@ realtime-quiz-arena/
 * Prometheus (指标采集)
 * Grafana (可视化看板)
 
-##快速开始
+## 快速开始
 
 推荐使用 Docker Compose 运行本项目。
 
