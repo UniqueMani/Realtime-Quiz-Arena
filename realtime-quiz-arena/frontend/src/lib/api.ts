@@ -167,3 +167,51 @@ export async function nextQuestion(code: string, hostToken: string): Promise<Que
     )
     return res.data
 }
+
+// ==========================================
+//           新增：快问快答模式接口
+// ==========================================
+
+export interface SpeedGameStartResponse {
+    sessionId: string;
+    firstQuestion: QuestionResponse;
+    totalQuestions: number;
+}
+
+export interface SpeedGameSubmitResponse {
+    correct: boolean;
+    scoreEarned: number;
+    totalScore: number;
+    nextQuestion: QuestionResponse | null; // 如果为 null 代表游戏结束
+    finished: boolean;
+}
+
+export interface SpeedGameResultResponse {
+    nickname: string;
+    totalScore: number;
+    correctCount: number;
+    details: QuestionWithAnswer[]; // 你的后端 Result DTO 里包含题目详情
+}
+
+// 1. 开始游戏
+export async function startSpeedGame(nickname: string): Promise<SpeedGameStartResponse> {
+    // 注意：这里对应后端 @PostMapping("/api/speed/start")
+    const res = await api.post('/speed/start', null, { params: { nickname } });
+    return res.data;
+}
+
+// 2. 提交答案 (传 null 代表超时未答)
+export async function submitSpeedAnswer(sessionId: string, questionId: number, answer: string | null): Promise<SpeedGameSubmitResponse> {
+    const res = await api.post(`/speed/${sessionId}/submit`, {
+        questionId,
+        answer,
+        clientTimestampMs: Date.now()
+    });
+    return res.data;
+}
+
+// 3. 获取结果
+export async function getSpeedResult(sessionId: string): Promise<SpeedGameResultResponse> {
+    const res = await api.get(`/speed/${sessionId}/result`);
+    return res.data;
+}

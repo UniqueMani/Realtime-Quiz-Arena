@@ -2,7 +2,7 @@
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useSessionStore } from '../stores/session'
-import { createRoom, joinRoom } from '../lib/api'
+import { createRoom, joinRoom, startSpeedGame } from '../lib/api'
 
 const router = useRouter()
 const s = useSessionStore()
@@ -18,64 +18,87 @@ function normCode(v: string) {
   return v.trim().toUpperCase()
 }
 
+// 1. 创建房间逻辑 (Host)
 async function onCreateRoom() {
-  console.log('[Home.onCreateRoom] 开始创建房间', { nickname: nickname.value })
   err.value = ''
   const nick = nickname.value.trim()
   if (!nick) {
-    console.warn('[Home.onCreateRoom] 昵称为空')
-    err.value = '先取一个独一无二的昵称吧～ '
+    err.value = '先取一个独一无二的昵称吧～'
     return
   }
 
   creating.value = true
   try {
-    console.log('[Home.onCreateRoom] 调用createRoom API')
     const { roomCode, hostToken } = await createRoom()
-    console.log('[Home.onCreateRoom] 房间创建成功', { roomCode, hasHostToken: !!hostToken })
     s.roomCode = roomCode
     s.hostToken = hostToken
     s.nickname = nick
-    s.playerId = ''
-    console.log('[Home.onCreateRoom] 跳转到主持人页面', { path: `/host/${roomCode}` })
+    s.playerId = 'HOST' // 主持人标识
+
     router.push(`/host/${roomCode}`)
   } catch (e: any) {
-    console.error('[Home.onCreateRoom] 创建房间失败', {
-      error: e,
-      response: e?.response,
-      status: e?.response?.status,
-      data: e?.response?.data,
-    })
-    err.value = e?.response?.data?.message ?? '创建房间失败了，稍后再试试～'
+    err.value = '创建失败: ' + (e.response?.data?.message || '未知错误')
   } finally {
     creating.value = false
   }
 }
 
+// 2. 加入房间逻辑 (Player)
 async function onJoinRoom() {
   err.value = ''
   const code = normCode(joinCode.value)
   const nick = nickname.value.trim()
 
-  if (!code) {
-    err.value = '请输入房间码（比如 ABCD）'
-    return
-  }
-  if (!nick) {
-    err.value = '昵称不能为空噢～'
+  if (!code || !nick) {
+    err.value = '房间号和昵称都不能少哦'
     return
   }
 
   joining.value = true
   try {
-    const { playerId, nickname: serverNick } = await joinRoom(code, nick)
+    const { playerId, token } = await joinRoom(code, nick)
     s.roomCode = code
+    s.nickname = nick
     s.playerId = playerId
-    s.nickname = serverNick ?? nick
-    s.hostToken = ''
+    s.playerToken = token
+
     router.push(`/player/${code}/${playerId}`)
   } catch (e: any) {
-    err.value = e?.response?.data?.message ?? '加入失败：房间码不对或房间未创建～'
+    err.value = '加入失败: ' + (e.response?.data?.message || '房间不存在或已满')
+  } finally {
+    joining.value = false
+  }
+}
+
+// 3. 快问快答逻辑 (Speed Mode - New!)
+async function onStartSpeed() {
+  err.value = ''
+  const nick = nickname.value.trim()
+  if (!nick) {
+    err.value = '玩快问快答也要有个名字呀～'
+    return
+  }
+
+  // 这里为了简单复用 loading 状态，也可以单独设一个 speedLoading
+  joining.value = true
+  try {
+    // 调用后端接口
+    const res = await startSpeedGame(nick)
+
+    s.nickname = nick
+
+    // 跳转到答题页，并通过 router state 传递第一题数据
+    // 这样进入页面时不需要再次 fetch
+    router.push({
+      name: 'SpeedGame',
+      params: { sessionId: res.sessionId },
+      state: {
+        firstQuestion: JSON.stringify(res.firstQuestion),
+        total: res.totalQuestions
+      }
+    })
+  } catch (e: any) {
+    err.value = '启动失败：' + (e.response?.data?.message || '未知错误')
   } finally {
     joining.value = false
   }
@@ -84,92 +107,147 @@ async function onJoinRoom() {
 
 <template>
   <div class="min-h-screen w-full relative overflow-hidden">
-    <!-- full-viewport gradient background (works even if #app has max-width) -->
-    <div class="pointer-events-none fixed inset-0 -z-10 bg-gradient-to-br from-pink-100 via-purple-100 to-sky-100"></div>
-    <!-- cute blobs -->
-    <div class="pointer-events-none fixed -top-24 -left-24 h-72 w-72 rounded-full bg-pink-300/40 blur-3xl animate-pulse"></div>
-    <div class="pointer-events-none fixed top-20 -right-24 h-80 w-80 rounded-full bg-sky-300/40 blur-3xl animate-pulse"></div>
-    <div class="pointer-events-none fixed -bottom-24 left-1/3 h-72 w-72 rounded-full bg-purple-300/40 blur-3xl animate-pulse"></div>
+    <!-- full-viewport gradient background (same style as Host) -->
+    <div class="pointer-events-none fixed inset-0 -z-10 bg-gradient-to-br from-purple-100 via-pink-100 to-sky-100"></div>
 
-    <div class="relative z-10 mx-auto max-w-4xl px-4 py-10">
-      <header class="text-center">
-        <div class="inline-flex items-center gap-2 rounded-full bg-white/60 px-4 py-2 shadow-sm backdrop-blur">
-          <span class="font-semibold text-slate-700">Realtime Quiz Arena</span>
-        </div>
-
-        <h1 class="mt-5 text-4xl font-extrabold tracking-tight text-slate-800">
-          来一局 <span class="text-pink-500">实时答题擂台</span> 吧！
+    <div class="relative z-10 mx-auto max-w-5xl px-4 py-10">
+      <!-- Title -->
+      <div class="rounded-3xl bg-white/70 backdrop-blur shadow-xl border border-white/60 p-6 mb-8 text-center">
+        <h1 class="text-4xl md:text-5xl font-extrabold tracking-tight text-slate-900">
+          <span class="text-transparent bg-clip-text bg-gradient-to-r from-violet-600 to-pink-500">Quiz Arena</span>
         </h1>
-        <p class="mt-3 text-slate-600">
-          创建房间 → 分享房间码 → 大家一起抢答，看排行榜实时变化
+        <p class="mt-2 text-sm md:text-base text-slate-600">
+          实时竞技 · 知识对决 · 极速挑战
         </p>
-      </header>
 
-      <div class="mt-10 grid gap-6 md:grid-cols-2">
-        <!-- Create -->
-        <section class="rounded-3xl bg-white/70 backdrop-blur shadow-xl border border-white/60 p-6">
-          <div class="flex items-center justify-between">
-            <h2 class="text-lg font-bold text-slate-800">我是主持人</h2>
-            <span class="rounded-full bg-pink-100 px-3 py-1 text-sm text-pink-700">Host</span>
+        <div
+            v-if="err"
+            class="mt-4 mx-auto max-w-lg rounded-2xl bg-rose-50/80 px-4 py-3 text-sm font-semibold text-rose-700 border border-rose-200"
+        >
+          {{ err }}
+        </div>
+      </div>
+
+      <!-- Cards -->
+      <div class="grid gap-6 md:grid-cols-3 items-stretch">
+        <!-- Host -->
+        <section class="rounded-3xl bg-white/70 backdrop-blur shadow-xl border border-white/60 p-5 flex flex-col">
+          <div class="flex items-center gap-3">
+            <div>
+              <div class="text-sm text-slate-500">作为主持人</div>
+              <div class="text-lg font-bold text-slate-800">新建比赛</div>
+            </div>
           </div>
 
-          <label class="mt-4 block text-sm font-medium text-slate-700">你的昵称</label>
-          <input
-              v-model="nickname"
-              class="mt-2 w-full rounded-2xl border border-slate-200 bg-white/80 px-4 py-3 outline-none focus:ring-4 focus:ring-pink-200"
-              placeholder="比如：小熊软糖"
-          />
+          <div class="mt-4 space-y-3 flex-1">
+            <div>
+              <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">你的昵称</label>
+              <input
+                  v-model="nickname"
+                  class="w-full rounded-2xl border border-slate-200 bg-white/80 px-4 py-3 text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-pink-500/20 focus:border-pink-300 transition"
+                  placeholder="主持人昵称"
+              />
+            </div>
 
-          <button
-              @click="onCreateRoom"
-              :disabled="creating"
-              class="mt-5 w-full rounded-2xl bg-gradient-to-r from-pink-500 to-purple-500 px-4 py-3 font-semibold text-white shadow-lg hover:opacity-95 active:scale-[0.99] disabled:opacity-60"
-          >
-            {{ creating ? '创建中…' : '创建房间' }}
-          </button>
+            <button
+                @click="onCreateRoom"
+                :disabled="creating"
+                class="w-full rounded-2xl bg-gradient-to-r from-pink-500 to-violet-500 px-4 py-3 text-sm font-semibold text-white shadow hover:opacity-95 active:scale-[0.99] transition disabled:opacity-60"
+            >
+              {{ creating ? '创建中…' : '新建比赛 →' }}
+            </button>
 
-          <p class="mt-3 text-sm text-slate-600">
-            创建后会进入主持人页面，可开始出题并查看排行榜。
-          </p>
+            <p class="text-xs text-slate-500">
+              创建后进入 Host 控制台，你可以发题、查看排行榜。
+            </p>
+          </div>
         </section>
 
-        <!-- Join -->
-        <section class="rounded-3xl bg-white/70 backdrop-blur shadow-xl border border-white/60 p-6">
-          <div class="flex items-center justify-between">
-            <h2 class="text-lg font-bold text-slate-800">我是选手</h2>
-            <span class="rounded-full bg-sky-100 px-3 py-1 text-sm text-sky-700">Player</span>
+        <!-- Player -->
+        <section class="rounded-3xl bg-white/70 backdrop-blur shadow-xl border border-white/60 p-5 flex flex-col">
+          <div class="flex items-center gap-3">
+            <div>
+              <div class="text-sm text-slate-500">作为选手</div>
+              <div class="text-lg font-bold text-slate-800">加入比赛</div>
+            </div>
           </div>
 
-          <label class="mt-4 block text-sm font-medium text-slate-700">房间码</label>
-          <input
-              v-model="joinCode"
-              class="mt-2 w-full rounded-2xl border border-slate-200 bg-white/80 px-4 py-3 uppercase tracking-widest outline-none focus:ring-4 focus:ring-sky-200"
-              placeholder="ABCD"
-          />
+          <div class="mt-4 space-y-3 flex-1">
+            <div>
+              <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">房间码</label>
+              <input
+                  v-model="joinCode"
+                  class="w-full rounded-2xl border border-slate-200 bg-white/80 px-4 py-3 text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-300 transition tracking-widest uppercase"
+                  placeholder="如 ABCD"
+              />
+            </div>
 
-          <label class="mt-4 block text-sm font-medium text-slate-700">你的昵称</label>
-          <input
-              v-model="nickname"
-              class="mt-2 w-full rounded-2xl border border-slate-200 bg-white/80 px-4 py-3 outline-none focus:ring-4 focus:ring-sky-200"
-              placeholder="比如：闪电猫猫"
-          />
+            <div>
+              <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">你的昵称</label>
+              <input
+                  v-model="nickname"
+                  class="w-full rounded-2xl border border-slate-200 bg-white/80 px-4 py-3 text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-300 transition"
+                  placeholder="选手名称"
+              />
+            </div>
 
-          <button
-              @click="onJoinRoom"
-              :disabled="joining"
-              class="mt-5 w-full rounded-2xl bg-gradient-to-r from-sky-500 to-indigo-500 px-4 py-3 font-semibold text-white shadow-lg hover:opacity-95 active:scale-[0.99] disabled:opacity-60"
-          >
-            {{ joining ? '加入中…' : ' 加入房间' }}
-          </button>
+            <button
+                @click="onJoinRoom"
+                :disabled="joining"
+                class="w-full rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white shadow hover:opacity-95 active:scale-[0.99] transition disabled:opacity-60"
+            >
+              {{ joining ? '加入中…' : '立即加入' }}
+            </button>
 
-          <p class="mt-3 text-sm text-slate-600">
-            加入后进入答题页，提交答案会触发排行榜实时刷新。
-          </p>
+            <p class="text-xs text-slate-500">
+              输入主持人提供的房间码加入，发题后即可作答。
+            </p>
+          </div>
+        </section>
+
+        <!-- Speed -->
+        <section class="rounded-3xl bg-white/70 backdrop-blur shadow-xl border border-white/60 p-5 flex flex-col">
+          <div class="flex items-center gap-3">
+            <div class="flex-1">
+              <div class="flex items-center justify-between gap-3">
+                <div>
+                  <div class="text-sm text-slate-500">Solo</div>
+                  <div class="text-lg font-bold text-slate-800">快问快答</div>
+                </div>
+                <span class="rounded-full bg-white/70 border border-white/60 px-3 py-1 text-xs font-semibold text-slate-700">
+                  15 秒/题
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div class="mt-4 space-y-3 flex-1">
+            <div>
+              <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">你的昵称</label>
+              <input
+                  v-model="nickname"
+                  class="w-full rounded-2xl border border-slate-200 bg-white/80 px-4 py-3 text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-300 transition"
+                  placeholder="用于计分与展示"
+              />
+            </div>
+
+            <button
+                @click="onStartSpeed"
+                :disabled="joining"
+                class="w-full rounded-2xl bg-gradient-to-r from-amber-400 to-orange-500 px-4 py-3 text-sm font-semibold text-white shadow hover:opacity-95 active:scale-[0.99] transition disabled:opacity-60"
+            >
+              {{ joining ? '启动中…' : '开始挑战' }}
+            </button>
+
+            <p class="text-xs text-slate-500">
+              快速作答累积分数，挑战结束后可查看题目解析。
+            </p>
+          </div>
         </section>
       </div>
 
-      <div v-if="err" class="mt-6 rounded-2xl border border-pink-200 bg-white/70 px-4 py-3 text-pink-700 shadow-sm">
-        {{ err }}
+      <div class="mt-10 text-center text-xs text-slate-500">
+        &copy; 2025 Java Enterprise Application Project
       </div>
     </div>
   </div>
