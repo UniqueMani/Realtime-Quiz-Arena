@@ -9,7 +9,7 @@ import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/api/speed")
-@Tag(name = "Speed Mode (Highlights)", description = "快问快打模式接口 - 展示 Swagger API 文档设计能力")
+@Tag(name = "Speed Mode (Highlights)", description = "快问快答模式接口")
 public class SpeedGameController {
 
     private final SpeedGameService speedGameService;
@@ -18,7 +18,7 @@ public class SpeedGameController {
         this.speedGameService = speedGameService;
     }
 
-    @Operation(summary = "开始快问快打", description = "创建新会话，随机抽取10题，返回第一题")
+    @Operation(summary = "开始快问快答", description = "创建新会话，随机抽取10题，返回第一题")
     @PostMapping("/start")
     public ResponseEntity<SpeedGameStartResponse> startGame(@RequestParam String nickname) {
         return ResponseEntity.ok(speedGameService.start(nickname));
